@@ -1,12 +1,24 @@
 {
-  "name": "scaling-fiesta",
+  "name": "scaling-fiesta-backend",
   "version": "1.0.0",
-  "description": "For data and authentication",
+  "description": "Real-time messaging backend with PostgreSQL",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "express": "^4.19.2"
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.3",
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   }
 }
