@@ -3,7 +3,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const PORT = process.env.PORT || 3000;
-const ADMIN_PIN = process.env.ADMIN_PIN || '2580';
+const ADMIN_PIN = process.env.ADMIN_PIN || '2127';
 
 const app = express();
 app.use(express.json());
@@ -44,6 +44,7 @@ function checkPin(req) {
 
 // ---------- routes ----------
 
+// create a ticket (public)
 app.post('/api/tickets', (req, res) => {
   const { name, contact, message } = req.body || {};
   if (!message || !message.trim()) {
@@ -59,12 +60,14 @@ app.post('/api/tickets', (req, res) => {
   res.json({ id });
 });
 
+// public stats
 app.get('/api/stats', (req, res) => {
   const open = db.prepare(`SELECT COUNT(*) c FROM tickets WHERE status = 'open'`).get().c;
   const replied = db.prepare(`SELECT COUNT(*) c FROM tickets WHERE status = 'replied'`).get().c;
   res.json({ open, replied, total: open + replied });
 });
 
+// check a single ticket (public — anyone with the ID can view it)
 app.get('/api/tickets/:id', (req, res) => {
   const id = req.params.id.toUpperCase();
   const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
@@ -72,12 +75,14 @@ app.get('/api/tickets/:id', (req, res) => {
   res.json(ticket);
 });
 
+// list all tickets (admin only)
 app.get('/api/tickets', (req, res) => {
   if (!checkPin(req)) return res.status(401).json({ error: 'Incorrect PIN.' });
   const tickets = db.prepare('SELECT * FROM tickets ORDER BY created_at DESC').all();
   res.json(tickets);
 });
 
+// reply to a ticket (admin only)
 app.patch('/api/tickets/:id', (req, res) => {
   if (!checkPin(req)) return res.status(401).json({ error: 'Incorrect PIN.' });
   const id = req.params.id.toUpperCase();
