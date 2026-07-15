@@ -1,16 +1,16 @@
 {
-  "name": "nova-whatsapp",
+  "name": "nova-tech-support",
   "version": "1.0.0",
-  "type": "module",
+  "description": "Nova Tech Support ticket desk",
   "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "node-fetch": "^3.3.2"
-  },
-  "engines": {
-    "node": ">=18"
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2"
   }
 }
