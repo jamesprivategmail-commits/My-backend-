@@ -1,145 +1,99 @@
-// Nova WhatsApp Bot — Meta Cloud API + AI provider bridge
-// Deploy target: Render (Web Service)
+const express = require('express');
+const path = require('path');
+const Database = require('better-sqlite3');
 
-import express from 'express';
-import fetch from 'node-fetch';
+const PORT = process.env.PORT || 3000;
+const ADMIN_PIN = process.env.ADMIN_PIN || '2580';
 
 const app = express();
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// ---------- Config (set these as Environment Variables on Render) ----------
-const VERIFY_TOKEN = process.env.WA_VERIFY_TOKEN;       // any string you choose, used to verify the webhook with Meta
-const WA_TOKEN = process.env.WA_ACCESS_TOKEN;            // permanent/temp token from Meta App dashboard
-const WA_PHONE_ID = process.env.WA_PHONE_NUMBER_ID;      // Phone number ID from Meta App dashboard
+// ---------- database ----------
+const db = new Database(path.join(__dirname, 'tickets.db'));
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tickets (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    contact TEXT,
+    message TEXT,
+    reply TEXT DEFAULT '',
+    status TEXT DEFAULT 'open',
+    created_at TEXT,
+    replied_at TEXT
+  )
+`);
 
-const AI_PROVIDER = process.env.AI_PROVIDER || 'cohere';   // which provider to use (see PROVIDERS below)
-const AI_API_KEY = process.env.AI_API_KEY;               // your key for that provider
-const AI_MODEL = process.env.AI_MODEL || 'command-a-03-2025'; // Cohere's flagship chat model
-
-const SYSTEM_PROMPT = process.env.NOVA_SYSTEM_PROMPT ||
-  "You are Nova, a helpful, friendly AI assistant chatting with someone over WhatsApp. Keep replies concise and conversational.";
-
-// ---------- AI providers (OpenAI-compatible chat/completions format) ----------
-const PROVIDERS = {
-  cohere:     { url: 'https://api.cohere.ai/compatibility/v1/chat/completions' },
-  openai:     { url: 'https://api.openai.com/v1/chat/completions' },
-  groq:       { url: 'https://api.groq.com/openai/v1/chat/completions' },
-  mistral:    { url: 'https://api.mistral.ai/v1/chat/completions' },
-  deepseek:   { url: 'https://api.deepseek.com/v1/chat/completions' },
-  together:   { url: 'https://api.together.xyz/v1/chat/completions' },
-  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions' },
-  cerebras:   { url: 'https://api.cerebras.ai/v1/chat/completions' },
-  xai:        { url: 'https://api.x.ai/v1/chat/completions' },
-  gemini:     { url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions' },
-};
-
-// Simple in-memory per-user conversation history (resets on server restart)
-// For production, swap this for a real database (Render Postgres, Redis, etc.)
-const conversations = new Map();
-
-function getHistory(userId) {
-  if (!conversations.has(userId)) {
-    conversations.set(userId, [{ role: 'system', content: SYSTEM_PROMPT }]);
-  }
-  return conversations.get(userId);
+function genTicketId() {
+  const n = Math.floor(100000 + Math.random() * 900000);
+  return 'NT-' + n;
 }
 
-async function askAI(userId, userText) {
-  const provider = PROVIDERS[AI_PROVIDER];
-  if (!provider) throw new Error(`Unknown AI_PROVIDER: ${AI_PROVIDER}`);
-
-  const history = getHistory(userId);
-  history.push({ role: 'user', content: userText });
-
-  // keep context small
-  const trimmed = [history[0], ...history.slice(-12)];
-
-  const res = await fetch(provider.url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${AI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      messages: trimmed,
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`AI provider error ${res.status}: ${errText}`);
-  }
-
-  const data = await res.json();
-  const reply = data.choices?.[0]?.message?.content?.trim() || "Sorry, I couldn't generate a reply.";
-  history.push({ role: 'assistant', content: reply });
-  return reply;
+function uniqueTicketId() {
+  let id;
+  do {
+    id = genTicketId();
+  } while (db.prepare('SELECT 1 FROM tickets WHERE id = ?').get(id));
+  return id;
 }
 
-// ---------- WhatsApp send ----------
-async function sendWhatsAppMessage(to, text) {
-  const url = `https://graph.facebook.com/v20.0/${WA_PHONE_ID}/messages`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${WA_TOKEN}`,
-    },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      to,
-      text: { body: text },
-    }),
-  });
-  if (!res.ok) {
-    console.error('WhatsApp send failed:', await res.text());
-  }
+function checkPin(req) {
+  const pin = req.query.pin || (req.body && req.body.pin);
+  return pin === ADMIN_PIN;
 }
 
-// ---------- Webhook verification (Meta calls this once when you set up the webhook) ----------
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+// ---------- routes ----------
 
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('Webhook verified');
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
+app.post('/api/tickets', (req, res) => {
+  const { name, contact, message } = req.body || {};
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'Message is required.' });
   }
+  const id = uniqueTicketId();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO tickets (id, name, contact, message, reply, status, created_at, replied_at)
+    VALUES (?, ?, ?, ?, '', 'open', ?, '')
+  `).run(id, (name || 'Anonymous').trim(), (contact || '').trim(), message.trim(), now);
+
+  res.json({ id });
 });
 
-// ---------- Webhook receiver (Meta posts incoming messages here) ----------
-app.post('/webhook', async (req, res) => {
-  // Always respond 200 fast so Meta doesn't retry
-  res.sendStatus(200);
-
-  try {
-    const entry = req.body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const message = change?.value?.messages?.[0];
-
-    if (!message) return; // could be a status update, not a message
-
-    const from = message.from; // sender's WhatsApp number
-    const text = message.text?.body;
-
-    if (!text) return; // ignore non-text messages for now (images, audio, etc.)
-
-    console.log(`Message from ${from}: ${text}`);
-
-    const reply = await askAI(from, text);
-    await sendWhatsAppMessage(from, reply);
-  } catch (err) {
-    console.error('Error handling webhook:', err);
-  }
+app.get('/api/stats', (req, res) => {
+  const open = db.prepare(`SELECT COUNT(*) c FROM tickets WHERE status = 'open'`).get().c;
+  const replied = db.prepare(`SELECT COUNT(*) c FROM tickets WHERE status = 'replied'`).get().c;
+  res.json({ open, replied, total: open + replied });
 });
 
-app.get('/', (req, res) => {
-  res.send('Nova WhatsApp bot is running.');
+app.get('/api/tickets/:id', (req, res) => {
+  const id = req.params.id.toUpperCase();
+  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+  res.json(ticket);
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Nova WhatsApp bot listening on port ${PORT}`));
+app.get('/api/tickets', (req, res) => {
+  if (!checkPin(req)) return res.status(401).json({ error: 'Incorrect PIN.' });
+  const tickets = db.prepare('SELECT * FROM tickets ORDER BY created_at DESC').all();
+  res.json(tickets);
+});
+
+app.patch('/api/tickets/:id', (req, res) => {
+  if (!checkPin(req)) return res.status(401).json({ error: 'Incorrect PIN.' });
+  const id = req.params.id.toUpperCase();
+  const { reply } = req.body || {};
+  if (!reply || !reply.trim()) return res.status(400).json({ error: 'Reply cannot be empty.' });
+
+  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+
+  const now = new Date().toISOString();
+  db.prepare(`UPDATE tickets SET reply = ?, status = 'replied', replied_at = ? WHERE id = ?`)
+    .run(reply.trim(), now, id);
+
+  res.json({ ok: true });
+});
+
+app.listen(PORT, () => {
+  console.log(`Nova Tech Support server running on port ${PORT}`);
+});
