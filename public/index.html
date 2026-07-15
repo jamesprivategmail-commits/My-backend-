@@ -425,4 +425,28 @@
         replyBtn.addEventListener('click', async ()=>{
           const val = textarea.value.trim();
           if(!val) return;
-          replyBtn.dis
+          replyBtn.disabled = true;
+          replyBtn.textContent = 'Saving…';
+          try{
+            const r = await fetch('/api/tickets/'+encodeURIComponent(t.id), {
+              method: 'PATCH',
+              headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({ reply: val, pin: adminPin })
+            });
+            if(!r.ok) throw new Error('failed');
+            renderAdmin();
+            refreshStats();
+          }catch(e){
+            replyBtn.disabled = false;
+            replyBtn.textContent = 'Send reply';
+          }
+        });
+        listEl.appendChild(card);
+      });
+    }catch(e){
+      listEl.innerHTML = '<div class="empty">Could not load the inbox right now.</div>';
+    }
+  }
+</script>
+</body>
+</html>
